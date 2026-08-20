@@ -127,7 +127,7 @@ async def get_budget(category: str) -> tuple[float, float]:
     when the lookup itself fails — caller distinguishes via the exception
     only if it needs to; policy.py treats missing budget conservatively
     either way (0 remaining -> escalates rather than auto-approves)."""
-    payload = {"filter": {"property": "Category", "select": {"equals": category}}}
+    payload = {"filter": {"property": "Category", "title": {"equals": category}}}
     try:
         data = await _request("POST", f"/databases/{settings.NOTION_BUDGETS_DB_ID}/query", payload, retries=1)
     except NotionAPIError:
