@@ -10,7 +10,8 @@ class Settings:
     NOTION_BUDGETS_DB_ID = os.getenv("NOTION_BUDGETS_DB_ID", "")
     NOTION_RUNLOG_DB_ID = os.getenv("NOTION_RUNLOG_DB_ID", "")
 
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 
     # Durable state (Render free Postgres). Unset -> in-memory fallback (dev/test only).
     DATABASE_URL = os.getenv("DATABASE_URL", "")

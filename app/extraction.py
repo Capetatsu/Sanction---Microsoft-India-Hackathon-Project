@@ -8,28 +8,47 @@ trusted to do (spend money).
 """
 import json
 import logging
-from google import genai
+import httpx
 from app.config import settings
 from app.models import ExtractedFields
 
 logger = logging.getLogger(__name__)
-_client = genai.Client(api_key=settings.GEMINI_API_KEY) if settings.GEMINI_API_KEY else None
-if _client:
-    logger.info("GEMINI client initialized: True")
+
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = getattr(settings, "GROQ_MODEL", "openai/gpt-oss-20b")
+
+_client_api_key = getattr(settings, "GROQ_API_KEY", "")
+if _client_api_key:
+    logger.info("GROQ client initialized: True")
 else:
-    logger.warning("GEMINI client initialized: False (no API key)")
+    logger.warning("GROQ client initialized: False (no API key)")
+
+
+EXTRACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "vendor": {"type": ["string", "null"]},
+        "amount": {"type": ["number", "null"]},
+        "category": {
+            "type": ["string", "null"],
+            "enum": ["Decorations", "Printing", "Equipment", "Food", "Travel", "Other"]
+        },
+        "purpose": {"type": ["string", "null"]},
+        "urgency": {"type": ["string", "null"], "enum": ["normal", "urgent"]},
+        "missing_fields": {
+            "type": "array",
+            "items": {"type": "string"}
+        },
+        "ai_summary": {"type": "string"}
+    },
+    "required": ["vendor", "amount", "category", "purpose", "urgency", "missing_fields", "ai_summary"],
+    "additionalProperties": False
+}
 
 EXTRACTION_PROMPT = """You extract structured fields from a college club expense request.
-Return ONLY a JSON object, no prose, matching this schema:
-{{
-  "vendor": string or null,
-  "amount": number or null,
-  "category": one of ["Decorations","Stationery","Food & Refreshments","Printing","Transport","Equipment Rental","Other"] or null,
-  "purpose": short string or null,
-  "urgency": "normal" or "urgent",
-  "missing_fields": array of field names that are required but absent (from: vendor, amount, category, purpose),
-  "ai_summary": one-sentence plain-language summary of the request for a human approver
-}}
+Return ONLY a JSON object matching the schema.
+
+Categories: Decorations, Printing, Equipment, Food, Travel, Other
 
 Request text:
 \"\"\"{text}\"\"\"
@@ -37,30 +56,59 @@ Request text:
 
 
 def extract(raw_text: str) -> ExtractedFields:
-    if _client is None:
+    if not _client_api_key:
         return _heuristic_fallback(raw_text)
 
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [
+            {"role": "system", "content": "You extract structured fields from expense requests. Return valid JSON only."},
+            {"role": "user", "content": EXTRACTION_PROMPT.format(text=raw_text)}
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "extracted_fields",
+                "schema": EXTRACTION_SCHEMA,
+                "strict": True
+            }
+        },
+        "max_tokens": 500,
+        "temperature": 0
+    }
+
+    headers = {
+        "Authorization": f"Bearer {_client_api_key}",
+        "Content-Type": "application/json"
+    }
+
     try:
-        response = _client.models.generate_content(
-            model="gemini-flash-latest",
-            contents=EXTRACTION_PROMPT.format(text=raw_text),
-            config=genai.types.GenerateContentConfig(
-                response_mime_type="application/json",
-                max_output_tokens=500,
-            ),
-        )
-        logger.info("GEMINI API call: success")
-    except Exception as e:
-        status = getattr(e, "status_code", None) or getattr(e, "code", None) or getattr(e, "status", None)
-        logger.warning("GEMINI API call: failed", extra={"error_type": type(e).__name__, "status": status, "error_message": str(e)[:200]})
+        with httpx.Client(timeout=30) as client:
+            response = client.post(GROQ_API_URL, headers=headers, json=payload)
+            response.raise_for_status()
+        logger.info("GROQ API call: success")
+    except httpx.HTTPStatusError as e:
+        logger.warning("GROQ API call: failed", extra={
+            "error_type": type(e).__name__,
+            "status": e.response.status_code,
+            "error_message": str(e)[:200]
+        })
         return _api_failure_fallback(raw_text)
-    text_out = (response.text or "").strip()
-    text_out = text_out.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    except Exception as e:
+        logger.warning("GROQ API call: failed", extra={
+            "error_type": type(e).__name__,
+            "status": None,
+            "error_message": str(e)[:200]
+        })
+        return _api_failure_fallback(raw_text)
+
     try:
-        data = json.loads(text_out)
-        logger.info("GEMINI response JSON: valid")
-    except json.JSONDecodeError:
-        logger.warning("GEMINI response JSON: invalid")
+        response_json = response.json()
+        content = response_json["choices"][0]["message"]["content"]
+        data = json.loads(content)
+        logger.info("GROQ response JSON: valid")
+    except (KeyError, IndexError, json.JSONDecodeError) as e:
+        logger.warning("GROQ response JSON: invalid", extra={"error_type": type(e).__name__})
         return _heuristic_fallback(raw_text)
 
     return ExtractedFields(
@@ -85,12 +133,12 @@ def _heuristic_fallback(raw_text: str) -> ExtractedFields:
         purpose=None,
         urgency="normal",
         missing_fields=["vendor", "amount", "category"],
-        ai_summary="[FALLBACK — no GEMINI_API_KEY set] Could not parse request: " + raw_text[:120],
+        ai_summary="[FALLBACK — no GROQ_API_KEY set] Could not parse request: " + raw_text[:120],
     )
 
 
 def _api_failure_fallback(raw_text: str) -> ExtractedFields:
-    """Used when the Gemini API call itself fails (rate limit/outage/etc.)
+    """Used when the Groq API call itself fails (rate limit/outage/etc.)
     with a key configured. Labeled distinctly from the no-key fallback so the
     two causes are never confused when reading the Run Log / AI Summary."""
     return ExtractedFields(

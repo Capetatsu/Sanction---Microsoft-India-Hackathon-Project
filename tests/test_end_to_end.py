@@ -268,15 +268,16 @@ def test_garbage_input_needs_clarification(client):
 
 # AI API failure -> falls back to Needs Clarification via the real except path
 def test_ai_api_failure_degrades_safely(client, monkeypatch):
-    class _BoomingModels:
-        def generate_content(self, **kw):
-            raise Exception("gemini outage")
-
-    class _BoomingClient:
-        models = _BoomingModels()
-
-    monkeypatch.setattr(extraction, "_client", _BoomingClient())
-    monkeypatch.setattr(extraction, "extract", _REAL_EXTRACT)  # undo the fixture's canned extractor
+    import httpx
+    # Restore real extract to test the actual Groq failure path
+    monkeypatch.setattr(extraction, "extract", _REAL_EXTRACT)
+    original_post = extraction.httpx.Client.post
+    def mock_post(self, url, *args, **kwargs):
+        if "groq" in url.lower() or "api.groq.com" in url:
+            raise httpx.HTTPStatusError("groq outage", request=None, response=httpx.Response(500))
+        return original_post(self, url, *args, **kwargs)
+    monkeypatch.setattr(extraction.httpx.Client, "post", mock_post)
+    monkeypatch.setattr(extraction, "_client_api_key", "test-key")
     resp = client.post("/webhook/request", json=_payload("k-ai", GARBAGE_TEXT), headers=HDRS)
     assert resp.status_code == 200
     assert resp.json()["status"] == RequestStatus.NEEDS_CLARIFICATION.value
