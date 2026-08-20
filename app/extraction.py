@@ -51,7 +51,8 @@ def extract(raw_text: str) -> ExtractedFields:
         )
         logger.info("GEMINI API call: success")
     except Exception as e:
-        logger.warning("GEMINI API call: failed", extra={"error_type": type(e).__name__})
+        status = getattr(e, "status_code", None) or getattr(e, "code", None) or getattr(e, "status", None)
+        logger.warning("GEMINI API call: failed", extra={"error_type": type(e).__name__, "status": status, "msg": str(e)[:200]})
         return _api_failure_fallback(raw_text)
     text_out = (response.text or "").strip()
     text_out = text_out.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
