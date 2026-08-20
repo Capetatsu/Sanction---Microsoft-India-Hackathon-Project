@@ -36,7 +36,7 @@ def extract(raw_text: str) -> ExtractedFields:
 
     try:
         response = _client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-flash-latest",
             contents=EXTRACTION_PROMPT.format(text=raw_text),
             config=genai.types.GenerateContentConfig(
                 response_mime_type="application/json",
