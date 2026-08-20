@@ -7,11 +7,17 @@ one thing rules can't (parse open-ended language), and nothing it isn't
 trusted to do (spend money).
 """
 import json
+import logging
 from google import genai
 from app.config import settings
 from app.models import ExtractedFields
 
+logger = logging.getLogger(__name__)
 _client = genai.Client(api_key=settings.GEMINI_API_KEY) if settings.GEMINI_API_KEY else None
+if _client:
+    logger.info("GEMINI client initialized: True")
+else:
+    logger.warning("GEMINI client initialized: False (no API key)")
 
 EXTRACTION_PROMPT = """You extract structured fields from a college club expense request.
 Return ONLY a JSON object, no prose, matching this schema:
@@ -43,14 +49,17 @@ def extract(raw_text: str) -> ExtractedFields:
                 max_output_tokens=500,
             ),
         )
-    except Exception:
-        # API error (rate limit/outage/etc.) -> Needs Clarification, not a 500.
+        logger.info("GEMINI API call: success")
+    except Exception as e:
+        logger.warning("GEMINI API call: failed", extra={"error_type": type(e).__name__})
         return _api_failure_fallback(raw_text)
     text_out = (response.text or "").strip()
     text_out = text_out.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         data = json.loads(text_out)
+        logger.info("GEMINI response JSON: valid")
     except json.JSONDecodeError:
+        logger.warning("GEMINI response JSON: invalid")
         return _heuristic_fallback(raw_text)
 
     return ExtractedFields(
