@@ -10,7 +10,7 @@ class Settings:
     NOTION_BUDGETS_DB_ID = os.getenv("NOTION_BUDGETS_DB_ID", "")
     NOTION_RUNLOG_DB_ID = os.getenv("NOTION_RUNLOG_DB_ID", "")
 
-    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
     # Durable state (Render free Postgres). Unset -> in-memory fallback (dev/test only).
     DATABASE_URL = os.getenv("DATABASE_URL", "")

@@ -1,6 +1,6 @@
 """
 End-to-end tests via FastAPI TestClient with a fake Notion client. No network
-and no credentials needed: the Notion/Anthropic/Resend calls are all replaced
+and no credentials needed: the Notion/Gemini/Resend calls are all replaced
 with in-memory fakes, so the full state machine in app/main.py is exercised.
 
 Covers the six real scenarios the demo must prove:
@@ -235,12 +235,12 @@ def test_garbage_input_needs_clarification(client):
 
 # AI API failure -> falls back to Needs Clarification via the real except path
 def test_ai_api_failure_degrades_safely(client, monkeypatch):
-    class _BoomingMessages:
-        def create(self, **kw):
-            raise Exception("anthropic outage")
+    class _BoomingModels:
+        def generate_content(self, **kw):
+            raise Exception("gemini outage")
 
     class _BoomingClient:
-        messages = _BoomingMessages()
+        models = _BoomingModels()
 
     monkeypatch.setattr(extraction, "_client", _BoomingClient())
     monkeypatch.setattr(extraction, "extract", _REAL_EXTRACT)  # undo the fixture's canned extractor

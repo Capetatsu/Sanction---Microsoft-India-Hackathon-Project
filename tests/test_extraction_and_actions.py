@@ -7,7 +7,7 @@ def test_extraction_no_api_key_uses_heuristic_fallback(monkeypatch):
     monkeypatch.setattr(extraction, "_client", None)
     result = extraction.extract("some raw text")
     assert result.missing_fields == ["vendor", "amount", "category"]
-    assert "no ANTHROPIC_API_KEY" in result.ai_summary
+    assert "no GEMINI_API_KEY" in result.ai_summary
 
 
 def _make_record():

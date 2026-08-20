@@ -19,7 +19,7 @@ downstream of it in this repo; with the backend off, nothing new happens.
 ```
 POST /webhook/request (secret-guarded)
   -> request_id + idempotency check (Postgres)
-  -> AI extraction (one structured-JSON Anthropic call)
+  -> AI extraction (one structured-JSON Gemini call)
   -> policy.decide(): missing / duplicate / over-budget / over-threshold
   -> safe -> auto-approve                          risky -> Notion "Pending Approval"
   -> Run Log row at every transition
@@ -51,7 +51,7 @@ tests/                policy, extraction/actions fallbacks, store, end-to-end
 ```bash
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in NOTION_*, ANTHROPIC_API_KEY, RESEND_API_KEY,
+cp .env.example .env   # fill in NOTION_*, GEMINI_API_KEY, RESEND_API_KEY,
                        # DATABASE_URL, WEBHOOK_SECRET
 uvicorn app.main:app --reload
 ```

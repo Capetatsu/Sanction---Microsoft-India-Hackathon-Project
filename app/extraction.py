@@ -7,11 +7,11 @@ one thing rules can't (parse open-ended language), and nothing it isn't
 trusted to do (spend money).
 """
 import json
-from anthropic import Anthropic
+from google import genai
 from app.config import settings
 from app.models import ExtractedFields
 
-_client = Anthropic(api_key=settings.ANTHROPIC_API_KEY) if settings.ANTHROPIC_API_KEY else None
+_client = genai.Client(api_key=settings.GEMINI_API_KEY) if settings.GEMINI_API_KEY else None
 
 EXTRACTION_PROMPT = """You extract structured fields from a college club expense request.
 Return ONLY a JSON object, no prose, matching this schema:
@@ -35,16 +35,19 @@ def extract(raw_text: str) -> ExtractedFields:
         return _heuristic_fallback(raw_text)
 
     try:
-        msg = _client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=500,
-            messages=[{"role": "user", "content": EXTRACTION_PROMPT.format(text=raw_text)}],
+        response = _client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=EXTRACTION_PROMPT.format(text=raw_text),
+            config=genai.types.GenerateContentConfig(
+                response_mime_type="application/json",
+                max_output_tokens=500,
+            ),
         )
     except Exception:
         # API error (rate limit/outage/etc.) -> Needs Clarification, not a 500.
         return _api_failure_fallback(raw_text)
-    text_out = "".join(b.text for b in msg.content if hasattr(b, "text"))
-    text_out = text_out.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    text_out = (response.text or "").strip()
+    text_out = text_out.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         data = json.loads(text_out)
     except json.JSONDecodeError:
@@ -72,12 +75,12 @@ def _heuristic_fallback(raw_text: str) -> ExtractedFields:
         purpose=None,
         urgency="normal",
         missing_fields=["vendor", "amount", "category"],
-        ai_summary="[FALLBACK — no ANTHROPIC_API_KEY set] Could not parse request: " + raw_text[:120],
+        ai_summary="[FALLBACK — no GEMINI_API_KEY set] Could not parse request: " + raw_text[:120],
     )
 
 
 def _api_failure_fallback(raw_text: str) -> ExtractedFields:
-    """Used when the Anthropic API call itself fails (rate limit/outage/etc.)
+    """Used when the Gemini API call itself fails (rate limit/outage/etc.)
     with a key configured. Labeled distinctly from the no-key fallback so the
     two causes are never confused when reading the Run Log / AI Summary."""
     return ExtractedFields(
