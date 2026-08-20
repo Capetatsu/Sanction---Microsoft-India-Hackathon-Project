@@ -24,7 +24,6 @@
   </form>
   <pre id="result"></pre>
   <script>
-    const SECRET = "REPLACE_WITH_WEBHOOK_SECRET"; // demo-only: server holds the real check
     document.getElementById("form").onsubmit = async (e) => {
       e.preventDefault();
       const payload = {
@@ -33,9 +32,9 @@
         requester_contact: document.getElementById("contact").value.trim(),
         raw_text: document.getElementById("text").value.trim(),
       };
-      const res = await fetch("/webhook/request", {
+      const res = await fetch("/demo/request", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Webhook-Secret": SECRET },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const out = document.getElementById("result");

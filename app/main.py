@@ -65,6 +65,23 @@ def _check_webhook_auth(x_webhook_secret: str | None):
 async def receive_request(incoming: IncomingRequest, x_webhook_secret: str | None = Header(default=None)):
     _check_webhook_auth(x_webhook_secret)
 
+    return await _process_request(incoming)
+
+
+@app.post("/demo/request")
+async def demo_request(incoming: IncomingRequest):
+    """Server-side proxy for the built-in demo form. The form is served by this
+    same backend, so the webhook secret is injected here from server config —
+    never embedded in browser-visible HTML/JavaScript. /webhook/request remains
+    the protected external trigger; this endpoint only forwards the form's
+    payload through the exact same pipeline after the same auth check."""
+    return await _process_request(incoming, injected_secret=settings.WEBHOOK_SECRET)
+
+
+async def _process_request(incoming: IncomingRequest, injected_secret: str | None = None):
+    if injected_secret is not None:
+        _check_webhook_auth(injected_secret)
+
     existing = await store.already_processed(incoming.idempotency_key)
     if existing:
         return {"status": "duplicate_ignored", "request_id": existing}

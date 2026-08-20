@@ -138,6 +138,39 @@ def test_webhook_requires_secret(client):
     assert resp.status_code == 401
 
 
+def test_webhook_with_wrong_secret_rejected(client):
+    resp = client.post(
+        "/webhook/request",
+        json=_payload("k-wrong", CLEAN_TEXT),
+        headers={"X-Webhook-Secret": "wrong-secret"},
+    )
+    assert resp.status_code == 401
+
+
+def test_demo_proxy_injects_secret_server_side(client):
+    # The demo form posts to /demo/request with no secret header; the server
+    # injects WEBHOOK_SECRET and runs the exact same pipeline.
+    resp = client.post("/demo/request", json=_payload("k-demo", CLEAN_TEXT))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == RequestStatus.AUTO_APPROVED.value
+    rid = body["request_id"]
+    assert rid.startswith("REQ-")
+    assert client.fake.page_status(rid) == RequestStatus.AUTO_APPROVED.value
+    assert client.fake.created == 1
+    log = client.fake.runlog_for(rid)
+    assert log == ["Received", "Auto-Approved", "Action-Sent"]
+
+
+def test_demo_form_has_no_secret_in_browser_code():
+    from pathlib import Path
+    html = Path(__file__).resolve().parent.parent / "static" / "demo_form.html"
+    src = html.read_text(encoding="utf-8")
+    assert "X-Webhook-Secret" not in src
+    assert "SECRET" not in src
+    assert "/demo/request" in src
+
+
 # Scenario 1: safe request -> auto-processed -> action -> Run Log
 def test_safe_request_auto_approved_and_actioned(client):
     resp = client.post("/webhook/request", json=_payload("k-safe", CLEAN_TEXT), headers=HDRS)
