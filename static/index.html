@@ -65,8 +65,12 @@
         </div>
       </div>
     </aside>
+    <div id="sidebar-overlay" class="sidebar-overlay" onclick="window.closeSidebar()"></div>
     <main id="main">
       <header id="header">
+        <button class="hamburger" id="hamburger-btn" onclick="window.toggleSidebar()" aria-label="Open navigation">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
         <div class="header-left">
           <h1 id="page-title">Dashboard</h1>
           <span id="page-subtitle" class="header-subtitle">Your expense operations at a glance</span>
@@ -74,7 +78,7 @@
         <div class="header-right">
           <div class="search-box">
             <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" id="global-search" placeholder="Search requests...">
+            <input type="text" id="global-search" placeholder="Search...">
           </div>
           <div class="header-divider"></div>
           <span class="header-date" id="header-date"></span>
@@ -85,7 +89,7 @@
           </div>
           <button class="btn btn-primary btn-sm" onclick="window.showNewRequest()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            New Request
+            <span class="btn-new-req-text">New Request</span>
           </button>
         </div>
       </header>

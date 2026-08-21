@@ -533,38 +533,58 @@ function renderRequests() {
   ];
   const cats = ["Decorations","Printing","Equipment","Food","Travel","Other"];
 
+  const mobileCards = filtered.length === 0
+    ? `<div class="empty-state"><div class="empty-title">No requests found</div><div class="empty-text">Try adjusting your filters or submit a new request.</div></div>`
+    : filtered.map(r => `
+      <div class="mobile-req-card" onclick="window.openRequest('${r.request_id}')">
+        <div class="mobile-req-top">
+          <span class="mobile-req-id">${r.request_id}</span>
+          <span class="mobile-req-amount">${INR(r.extracted?.amount)}</span>
+        </div>
+        <div class="mobile-req-row">
+          <span class="mobile-req-vendor">${r.extracted?.vendor||"—"} · ${r.extracted?.category||""}</span>
+          ${STATUS_BADGE(r.decision?.status)}
+        </div>
+        <div class="mobile-req-row" style="margin-top:4px">
+          <span>${r.incoming?.requester_name||"—"}</span>
+          <span>${fmtDate(r.incoming?.received_at)}</span>
+        </div>
+        ${r.decision?.risk_reasons?.length ? `<div class="mobile-req-risk">⚠ ${r.decision.risk_reasons[0]}</div>` : ""}
+      </div>`).join("");
+
   return `
   <div class="fade-in">
-    <div class="tabs">
+    <div class="tabs-scroll">
       ${tabs.map(([k, l, c]) => `<div class="tab ${S.filterStatus===k||(k==="all"&&!S.filterStatus)?"active":""}" onclick="window.setRequestTab('${k==="all"?"":k}')">${l}<span class="tab-count">${c}</span></div>`).join("")}
     </div>
-    <div class="filters">
-      <div class="filter-group">
-        <span class="filter-label">Category</span>
-        <select class="filter" onchange="window.setFilter('category',this.value)">
+    <div class="filters-scroll">
+      <div class="filter-pill ${S.filterCategory?"active":""}" onclick="this.querySelector('select').click()">
+        <span>Category</span>
+        <select onchange="window.setFilter('category',this.value)" style="background:none;border:none;color:inherit;font-size:inherit;padding:0;width:auto;min-height:auto">
           <option value="">All</option>
           ${cats.map(c => `<option value="${c}" ${S.filterCategory===c?"selected":""}>${c}</option>`).join("")}
         </select>
       </div>
-      <div class="filter-group">
-        <span class="filter-label">From</span>
-        <input type="date" class="filter" value="${S.filterDateFrom}" onchange="window.setFilter('dateFrom',this.value)" style="width:130px">
+      <div class="filter-pill">
+        <span>From</span>
+        <input type="date" value="${S.filterDateFrom}" onchange="window.setFilter('dateFrom',this.value)" style="background:none;border:none;color:inherit;font-size:11px;padding:0;width:90px;min-height:auto">
       </div>
-      <div class="filter-group">
-        <span class="filter-label">To</span>
-        <input type="date" class="filter" value="${S.filterDateTo}" onchange="window.setFilter('dateTo',this.value)" style="width:130px">
+      <div class="filter-pill">
+        <span>To</span>
+        <input type="date" value="${S.filterDateTo}" onchange="window.setFilter('dateTo',this.value)" style="background:none;border:none;color:inherit;font-size:11px;padding:0;width:90px;min-height:auto">
       </div>
-      <div class="filter-group">
-        <span class="filter-label">Min ₹</span>
-        <input type="number" class="filter" value="${S.filterAmountMin}" onchange="window.setFilter('amountMin',this.value)" placeholder="0" style="width:80px">
+      <div class="filter-pill">
+        <span>Min ₹</span>
+        <input type="number" value="${S.filterAmountMin}" onchange="window.setFilter('amountMin',this.value)" placeholder="0" style="background:none;border:none;color:inherit;font-size:11px;padding:0;width:50px;min-height:auto">
       </div>
-      <div class="filter-group">
-        <span class="filter-label">Max ₹</span>
-        <input type="number" class="filter" value="${S.filterAmountMax}" onchange="window.setFilter('amountMax',this.value)" placeholder="∞" style="width:80px">
+      <div class="filter-pill">
+        <span>Max ₹</span>
+        <input type="number" value="${S.filterAmountMax}" onchange="window.setFilter('amountMax',this.value)" placeholder="∞" style="background:none;border:none;color:inherit;font-size:11px;padding:0;width:50px;min-height:auto">
       </div>
-      ${(S.filterStatus||S.filterCategory||S.filterDateFrom||S.filterDateTo||S.filterAmountMin||S.filterAmountMax) ? `<button class="btn btn-ghost btn-sm" onclick="window.clearFilters()">Clear</button>` : ""}
+      ${(S.filterStatus||S.filterCategory||S.filterDateFrom||S.filterDateTo||S.filterAmountMin||S.filterAmountMax) ? `<div class="filter-pill" onclick="window.clearFilters()" style="color:var(--error);border-color:var(--error-border)">Clear</div>` : ""}
     </div>
-    <div class="card">
+    <!-- Desktop table -->
+    <div class="card desktop-table">
       <div class="table-wrap">
         <table>
           <thead><tr>
@@ -587,6 +607,10 @@ function renderRequests() {
           </tbody>
         </table>
       </div>
+    </div>
+    <!-- Mobile cards -->
+    <div class="mobile-cards" style="display:none">
+      ${mobileCards}
     </div>
   </div>`;
 }
@@ -1152,10 +1176,35 @@ window.setReportsPeriod = (p) => { S.reportsPeriod = p; render(); };
 window.calNav = (dir) => { S.calendarDate = new Date(S.calendarDate.getFullYear(), S.calendarDate.getMonth() + dir, 1); render(); };
 
 /* ═══════════════════════════════════════════════════════════════
+   MOBILE SIDEBAR
+   ═══════════════════════════════════════════════════════════════ */
+function toggleSidebar() {
+  const sidebar = $("#sidebar");
+  const overlay = $("#sidebar-overlay");
+  const isOpen = sidebar.classList.contains("open");
+  if (isOpen) {
+    sidebar.classList.remove("open");
+    overlay.classList.remove("open");
+  } else {
+    sidebar.classList.add("open");
+    overlay.classList.add("open");
+  }
+}
+function closeSidebar() {
+  const sidebar = $("#sidebar");
+  const overlay = $("#sidebar-overlay");
+  sidebar.classList.remove("open");
+  overlay.classList.remove("open");
+}
+window.toggleSidebar = toggleSidebar;
+window.closeSidebar = closeSidebar;
+
+/* ═══════════════════════════════════════════════════════════════
    NAVIGATION
    ═══════════════════════════════════════════════════════════════ */
 function navigate(page) {
   S.page = page;
+  closeSidebar();
   render();
 }
 
@@ -1195,6 +1244,18 @@ function init() {
   // Search
   const gs = $("#global-search");
   if (gs) gs.addEventListener("input", (e) => { S.search = e.target.value; if (S.page === "requests") render(); });
+
+  // Close sidebar on nav click (mobile)
+  $$(".nav-item").forEach(a => a.addEventListener("click", () => closeSidebar()));
+
+  // Close sidebar on escape key
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeSidebar();
+      const drawer = $("#drawer");
+      if (drawer && drawer.classList.contains("open")) drawer.classList.remove("open");
+    }
+  });
 
   // Load data and render
   loadData().then(() => navigate(location.hash.slice(1) || "dashboard"));
