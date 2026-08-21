@@ -10,7 +10,7 @@ call.
 """
 import asyncio
 import httpx
-from datetime import datetime
+from datetime import datetime, timezone
 from app.config import settings
 from app.models import RequestRecord, RequestStatus
 
@@ -22,12 +22,22 @@ class NotionAPIError(Exception):
     pass
 
 
+_client: httpx.AsyncClient | None = None
+
+
 def _headers():
     return {
         "Authorization": f"Bearer {settings.NOTION_TOKEN}",
         "Notion-Version": NOTION_VERSION,
         "Content-Type": "application/json",
     }
+
+
+async def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=15)
+    return _client
 
 
 async def _request(method: str, path: str, payload: dict | None = None, retries: int = 0) -> dict:
@@ -37,16 +47,16 @@ async def _request(method: str, path: str, payload: dict | None = None, retries:
     last_err: Exception | None = None
     for attempt in range(retries + 1):
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                url = f"{BASE_URL}{path}"
-                if method == "POST":
-                    resp = await client.post(url, headers=_headers(), json=payload or {})
-                elif method == "PATCH":
-                    resp = await client.patch(url, headers=_headers(), json=payload or {})
-                else:
-                    resp = await client.get(url, headers=_headers())
-                resp.raise_for_status()
-                return resp.json()
+            client = await _get_client()
+            url = f"{BASE_URL}{path}"
+            if method == "POST":
+                resp = await client.post(url, headers=_headers(), json=payload or {})
+            elif method == "PATCH":
+                resp = await client.patch(url, headers=_headers(), json=payload or {})
+            else:
+                resp = await client.get(url, headers=_headers())
+            resp.raise_for_status()
+            return resp.json()
         except httpx.HTTPError as e:
             last_err = e
             if attempt < retries:
@@ -90,7 +100,7 @@ async def update_request_status(page_id: str, status: RequestStatus, decided_by:
     props = {"Status": {"select": {"name": status.value}}}
     if decided_by:
         props["Decided By"] = {"rich_text": [{"text": {"content": decided_by}}]}
-        props["Decided At"] = {"date": {"start": datetime.utcnow().isoformat()}}
+        props["Decided At"] = {"date": {"start": datetime.now(timezone.utc).isoformat()}}
     await _patch(f"/pages/{page_id}", {"properties": props})
 
 
@@ -98,11 +108,16 @@ async def get_request_decision(page_id: str) -> tuple[str | None, str | None]:
     """Poll a request page for a human decision made directly in Notion.
     Returns (decision, decided_by) where decision is 'Approved'/'Rejected'/None."""
     data = await _get(f"/pages/{page_id}")
-    props = data["properties"]
+    props = data.get("properties", {})
     decision_prop = props.get("Decision", {}).get("select")
     decided_by_prop = props.get("Decided By", {}).get("rich_text", [])
-    decision = decision_prop["name"] if decision_prop else None
-    decided_by = decided_by_prop[0]["text"]["content"] if decided_by_prop else None
+    decision = decision_prop.get("name") if isinstance(decision_prop, dict) else None
+    decided_by = None
+    if isinstance(decided_by_prop, list) and decided_by_prop:
+        first = decided_by_prop[0]
+        if isinstance(first, dict):
+            text_obj = first.get("text", {})
+            decided_by = text_obj.get("content") if isinstance(text_obj, dict) else None
     return decision, decided_by
 
 
@@ -115,7 +130,7 @@ async def append_run_log(request_id: str, action: str, actor: str, detail: str =
             "Action": {"select": {"name": action}},
             "Actor": {"rich_text": [{"text": {"content": actor}}]},
             "Detail": {"rich_text": [{"text": {"content": detail[:2000]}}]},
-            "Timestamp": {"date": {"start": datetime.utcnow().isoformat()}},
+            "Timestamp": {"date": {"start": datetime.now(timezone.utc).isoformat()}},
         },
     }
     await _post("/pages", payload)
@@ -123,15 +138,10 @@ async def append_run_log(request_id: str, action: str, actor: str, detail: str =
 
 async def get_budget(category: str) -> tuple[float, float]:
     """Returns (cap, spent) for a category by querying the Budgets DB.
-    Returns (0.0, 0.0) both when the category truly has no budget row and
-    when the lookup itself fails — caller distinguishes via the exception
-    only if it needs to; policy.py treats missing budget conservatively
-    either way (0 remaining -> escalates rather than auto-approves)."""
+    Returns (0.0, 0.0) when the category truly has no budget row.
+    On API failure, raises NotionAPIError so the caller can handle it."""
     payload = {"filter": {"property": "Category", "select": {"equals": category}}}
-    try:
-        data = await _request("POST", f"/databases/{settings.NOTION_BUDGETS_DB_ID}/query", payload, retries=1)
-    except NotionAPIError:
-        return (0.0, 0.0)
+    data = await _request("POST", f"/databases/{settings.NOTION_BUDGETS_DB_ID}/query", payload, retries=1)
     results = data.get("results", [])
     if not results:
         return (0.0, 0.0)

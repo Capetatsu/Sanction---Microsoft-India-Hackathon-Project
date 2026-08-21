@@ -16,7 +16,6 @@ Clarification; Notion create failure returns 502 without losing the record;
 email failure logs an Error row instead of claiming success.
 """
 import pytest
-from datetime import datetime
 
 from app import store, extraction, notion_client
 from app.config import settings
@@ -190,7 +189,7 @@ def test_risky_request_approved_in_notion_resumes(client):
     assert client.fake.runlog_for(rid) == ["Received", "Escalated"]
 
     client.fake.decisions[rid] = ("Approved", "Prof. R. Desai")
-    poll = client.post("/notion/check-approvals")
+    poll = client.post("/notion/check-approvals", headers=HDRS)
     assert rid in poll.json()["resumed"]
     assert poll.json()["failed"] == []
 
@@ -201,7 +200,7 @@ def test_risky_request_approved_in_notion_resumes(client):
     assert client.fake.runlog_for(rid) == ["Received", "Escalated", "Approved", "Action-Sent"]
 
     # A second poll does nothing: record has left Pending Approval.
-    poll2 = client.post("/notion/check-approvals").json()
+    poll2 = client.post("/notion/check-approvals", headers=HDRS).json()
     assert rid not in poll2["resumed"]
 
 
@@ -213,7 +212,7 @@ def test_risky_request_rejected_no_action(client):
     rid = body["request_id"]
 
     client.fake.decisions[rid] = ("Rejected", "Prof. R. Desai")
-    poll = client.post("/notion/check-approvals")
+    poll = client.post("/notion/check-approvals", headers=HDRS)
     assert rid in poll.json()["resumed"]
 
     record = store._MEM_STORE[rid]

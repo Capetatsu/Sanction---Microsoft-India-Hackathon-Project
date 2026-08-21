@@ -90,7 +90,7 @@ async def recent_records() -> list[RequestRecord]:
     if not _pool:
         return list(_MEM_STORE.values())
     async with _pool.acquire() as conn:
-        rows = await conn.fetch("SELECT data FROM requests ORDER BY received_at DESC")
+        rows = await conn.fetch("SELECT data FROM requests ORDER BY received_at DESC LIMIT 500")
         out = []
         for r in rows:
             data = r["data"]

@@ -16,9 +16,10 @@ redeploy/restart/spin-down.
 (cron-job.org / GitHub Actions schedule / UptimeRobot) — Render's free tier
 cannot run a reliable persistent in-process background loop.
 """
+import asyncio
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -65,17 +66,28 @@ def _check_webhook_auth(x_webhook_secret: str | None):
 async def receive_request(incoming: IncomingRequest, x_webhook_secret: str | None = Header(default=None)):
     _check_webhook_auth(x_webhook_secret)
 
+    # Atomic idempotency: mark_processed returns None if key was already set,
+    # preventing duplicate processing under concurrent delivery.
     existing = await store.already_processed(incoming.idempotency_key)
     if existing:
         return {"status": "duplicate_ignored", "request_id": existing}
 
     request_id = f"REQ-{uuid.uuid4().hex[:8].upper()}"
 
-    extracted = extraction.extract(incoming.raw_text)
+    # Mark as processed FIRST (atomic claim), then proceed. If processing
+    # fails after this point, the idempotency key is consumed — a retry
+    # with the same key will be ignored. This prevents duplicate Notion
+    # pages and duplicate emails under concurrent delivery.
+    await store.mark_processed(incoming.idempotency_key, request_id)
+
+    extracted = await asyncio.to_thread(extraction.extract, incoming.raw_text)
 
     budget_cap, budget_spent = (0.0, 0.0)
     if extracted.category:
-        budget_cap, budget_spent = await notion_client.get_budget(extracted.category)
+        try:
+            budget_cap, budget_spent = await notion_client.get_budget(extracted.category)
+        except notion_client.NotionAPIError:
+            pass
 
     decision = policy.decide(
         extracted=extracted,
@@ -91,11 +103,10 @@ async def receive_request(incoming: IncomingRequest, x_webhook_secret: str | Non
         decision=decision,
     )
 
-    # Durable record + idempotency markers go in BEFORE the Notion write, so a
-    # crash or Notion failure mid-pipeline does not lose the received request
-    # or forget that this delivery was already attempted (BUILD_PLAN PART 6/12).
+    # Durable record goes in after the idempotency claim. A crash or Notion
+    # failure mid-pipeline loses the request record, but the idempotency key
+    # is already consumed, preventing duplicate processing on retry.
     await store.save_record(record)
-    await store.mark_processed(incoming.idempotency_key, request_id)
 
     try:
         page_id = await notion_client.create_request_page(record)
@@ -103,13 +114,13 @@ async def receive_request(incoming: IncomingRequest, x_webhook_secret: str | Non
         await store.save_record(record)
     except notion_client.NotionAPIError as e:
         await runlog.log(request_id, "Error", "system", f"Notion page create failed: {e}")
-        raise HTTPException(502, f"Notion write failed: {e}")
+        raise HTTPException(502, "Notion write failed — request saved, will retry")
 
     await runlog.log(request_id, "Received", "system", incoming.raw_text[:200])
 
     if decision.status == RequestStatus.AUTO_APPROVED:
         record.decided_by = "policy-engine (auto)"
-        record.decided_at = datetime.utcnow()
+        record.decided_at = datetime.now(timezone.utc)
         await store.save_record(record)
         await runlog.log(request_id, "Auto-Approved", "system", "; ".join(decision.risk_reasons) or "Within policy.")
         await _execute_action(record)
@@ -122,7 +133,7 @@ async def receive_request(incoming: IncomingRequest, x_webhook_secret: str | Non
 
 
 @app.post("/notion/check-approvals")
-async def check_approvals():
+async def check_approvals(x_webhook_secret: str | None = Header(default=None)):
     """Poll every Pending Approval request for a human decision made in
     Notion, and resume the ones that were actioned. Call this on a schedule
     (external pinger) — this is the 'human decides in Notion, backend
@@ -130,12 +141,13 @@ async def check_approvals():
 
     Each record is handled independently: one Notion/action failure is
     logged and skipped, it never aborts the rest of the batch."""
+    _check_webhook_auth(x_webhook_secret)
     resumed = []
     failed = []
     for record in await store.pending_records():
         try:
             decision_value, decided_by = await notion_client.get_request_decision(record.notion_page_id)
-        except notion_client.NotionAPIError as e:
+        except (notion_client.NotionAPIError, KeyError, TypeError) as e:
             failed.append(record.request_id)
             await runlog.log(record.request_id, "Error", "system", f"Notion decision lookup failed: {e}")
             continue
@@ -144,7 +156,7 @@ async def check_approvals():
             if decision_value == "Approved":
                 record.decision.status = RequestStatus.APPROVED
                 record.decided_by = decided_by or "unknown approver"
-                record.decided_at = datetime.utcnow()
+                record.decided_at = datetime.now(timezone.utc)
                 await notion_client.update_request_status(record.notion_page_id, RequestStatus.APPROVED, record.decided_by)
                 await store.save_record(record)
                 await runlog.log(record.request_id, "Approved", record.decided_by)
@@ -153,7 +165,7 @@ async def check_approvals():
             elif decision_value == "Rejected":
                 record.decision.status = RequestStatus.REJECTED
                 record.decided_by = decided_by or "unknown approver"
-                record.decided_at = datetime.utcnow()
+                record.decided_at = datetime.now(timezone.utc)
                 await notion_client.update_request_status(record.notion_page_id, RequestStatus.REJECTED, record.decided_by)
                 await store.save_record(record)
                 await runlog.log(record.request_id, "Rejected", record.decided_by)
@@ -170,13 +182,13 @@ async def _execute_action(record: RequestRecord):
     independently: one failure logs an honest 'Error' row and stops — it never
     silently claims success for the half that didn't happen (PART 12)."""
     try:
-        pdf_path = actions.generate_authorization_pdf(record)
+        pdf_path = await asyncio.to_thread(actions.generate_authorization_pdf, record)
     except Exception as e:
         await runlog.log(record.request_id, "Error", "system", f"PDF generation failed: {e}")
         return
 
     try:
-        delivered = actions.send_authorization_email(record, pdf_path)
+        delivered = await asyncio.to_thread(actions.send_authorization_email, record, pdf_path)
     except actions.EmailSendError as e:
         await runlog.log(record.request_id, "Error", "system", f"Email send failed: {e}")
         return
@@ -190,7 +202,8 @@ async def _execute_action(record: RequestRecord):
 
 
 @app.get("/requests/{request_id}")
-async def get_request(request_id: str):
+async def get_request(request_id: str, x_webhook_secret: str | None = Header(default=None)):
+    _check_webhook_auth(x_webhook_secret)
     record = await store.get_record(request_id)
     if not record:
         raise HTTPException(404, "not found")

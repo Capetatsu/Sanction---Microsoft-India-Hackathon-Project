@@ -1,6 +1,6 @@
 """Unit tests for the deterministic policy engine (no network/DB needed)."""
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.models import ExtractedFields, RequestRecord, IncomingRequest, Decision, RequestStatus
 from app import policy
 
@@ -17,7 +17,7 @@ def _record(vendor, amount, request_id="REQ-OLD1", days_ago=1, status=RequestSta
         requester_name="Test",
         requester_contact="t@example.edu",
         raw_text="x",
-        received_at=datetime.utcnow() - timedelta(days=days_ago),
+        received_at=datetime.now(timezone.utc) - timedelta(days=days_ago),
     )
     extracted = ExtractedFields(vendor=vendor, amount=amount, category="Printing", purpose="p", urgency="normal", missing_fields=[])
     return RequestRecord(request_id=request_id, incoming=incoming, extracted=extracted, decision=Decision(status=status))

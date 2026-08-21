@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field
@@ -20,7 +20,7 @@ class IncomingRequest(BaseModel):
     requester_name: str = Field(max_length=200)
     requester_contact: str = Field(max_length=200)
     raw_text: str = Field(max_length=2000)
-    received_at: datetime = Field(default_factory=datetime.utcnow)
+    received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ExtractedFields(BaseModel):
