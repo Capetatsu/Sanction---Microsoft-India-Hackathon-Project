@@ -46,13 +46,48 @@ app.mount("/static", StaticFiles(directory=WEBSITE_DIR), name="static")
 
 @app.get("/")
 async def index():
-    """Demo trigger form — the only 'frontend', and deliberately one page."""
-    return FileResponse(os.path.join(WEBSITE_DIR, "demo_form.html"))
+    return FileResponse(os.path.join(WEBSITE_DIR, "index.html"))
 
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/requests")
+async def api_requests():
+    records = await store.recent_records()
+    return [r.model_dump(mode="json") for r in records]
+
+
+@app.get("/api/budgets")
+async def api_budgets():
+    categories = ["Decorations", "Printing", "Equipment", "Food", "Travel", "Other"]
+    out = []
+    for cat in categories:
+        cap, spent = await notion_client.get_budget(cat)
+        out.append({"category": cat, "cap": cap, "spent": spent})
+    return out
+
+
+@app.get("/api/runlog")
+async def api_runlog():
+    records = await store.recent_records()
+    return [
+        {
+            "request_id": r.request_id,
+            "status": r.decision.status.value,
+            "vendor": r.extracted.vendor,
+            "amount": r.extracted.amount,
+            "category": r.extracted.category,
+            "requester": r.incoming.requester_name,
+            "received_at": r.incoming.received_at.isoformat(),
+            "decided_by": r.decided_by,
+            "decided_at": r.decided_at.isoformat() if r.decided_at else None,
+            "risk_reasons": r.decision.risk_reasons,
+        }
+        for r in records
+    ]
 
 
 def _check_webhook_auth(x_webhook_secret: str | None):

@@ -1,6 +1,6 @@
 """
 End-to-end tests via FastAPI TestClient with a fake Notion client. No network
-and no credentials needed: the Notion/Anthropic/Resend calls are all replaced
+and no credentials needed: the Notion/Gemini/Resend calls are all replaced
 with in-memory fakes, so the full state machine in app/main.py is exercised.
 
 Covers the six real scenarios the demo must prove:
@@ -148,6 +148,39 @@ def test_webhook_requires_secret(client):
     assert resp.status_code == 401
 
 
+def test_webhook_with_wrong_secret_rejected(client):
+    resp = client.post(
+        "/webhook/request",
+        json=_payload("k-wrong", CLEAN_TEXT),
+        headers={"X-Webhook-Secret": "wrong-secret"},
+    )
+    assert resp.status_code == 401
+
+
+def test_demo_proxy_injects_secret_server_side(client):
+    # The demo form posts to /demo/request with no secret header; the server
+    # injects WEBHOOK_SECRET and runs the exact same pipeline.
+    resp = client.post("/demo/request", json=_payload("k-demo", CLEAN_TEXT))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == RequestStatus.AUTO_APPROVED.value
+    rid = body["request_id"]
+    assert rid.startswith("REQ-")
+    assert client.fake.page_status(rid) == RequestStatus.AUTO_APPROVED.value
+    assert client.fake.created == 1
+    log = client.fake.runlog_for(rid)
+    assert log == ["Received", "Auto-Approved", "Action-Sent"]
+
+
+def test_demo_form_has_no_secret_in_browser_code():
+    from pathlib import Path
+    html = Path(__file__).resolve().parent.parent / "static" / "demo_form.html"
+    src = html.read_text(encoding="utf-8")
+    assert "X-Webhook-Secret" not in src
+    assert "SECRET" not in src
+    assert "/demo/request" in src
+
+
 # Scenario 1: safe request -> auto-processed -> action -> Run Log
 def test_safe_request_auto_approved_and_actioned(client):
     resp = client.post("/webhook/request", json=_payload("k-safe", CLEAN_TEXT), headers=HDRS)
@@ -245,15 +278,16 @@ def test_garbage_input_needs_clarification(client):
 
 # AI API failure -> falls back to Needs Clarification via the real except path
 def test_ai_api_failure_degrades_safely(client, monkeypatch):
-    class _BoomingMessages:
-        def create(self, **kw):
-            raise Exception("anthropic outage")
-
-    class _BoomingClient:
-        messages = _BoomingMessages()
-
-    monkeypatch.setattr(extraction, "_client", _BoomingClient())
-    monkeypatch.setattr(extraction, "extract", _REAL_EXTRACT)  # undo the fixture's canned extractor
+    import httpx
+    # Restore real extract to test the actual Groq failure path
+    monkeypatch.setattr(extraction, "extract", _REAL_EXTRACT)
+    original_post = extraction.httpx.Client.post
+    def mock_post(self, url, *args, **kwargs):
+        if "groq" in url.lower() or "api.groq.com" in url:
+            raise httpx.HTTPStatusError("groq outage", request=None, response=httpx.Response(500))
+        return original_post(self, url, *args, **kwargs)
+    monkeypatch.setattr(extraction.httpx.Client, "post", mock_post)
+    monkeypatch.setattr(extraction, "_client_api_key", "test-key")
     resp = client.post("/webhook/request", json=_payload("k-ai", GARBAGE_TEXT), headers=HDRS)
     assert resp.status_code == 200
     assert resp.json()["status"] == RequestStatus.NEEDS_CLARIFICATION.value

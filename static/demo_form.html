@@ -149,9 +149,9 @@
         requester_contact: document.getElementById("contact").value.trim(),
         raw_text: document.getElementById("text").value.trim(),
       };
-      const res = await fetch("/webhook/request", {
+      const res = await fetch("/demo/request", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Webhook-Secret": SECRET },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const out = document.getElementById("result");
