@@ -13,6 +13,7 @@ request (and — for the risky case — a fresh row waiting for a Notion decisio
 import argparse
 import json
 import os
+import sys
 import uuid
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen

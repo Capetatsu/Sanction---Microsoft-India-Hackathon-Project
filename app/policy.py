@@ -3,7 +3,7 @@ This module — not the LLM — makes the approve/escalate/reject call. The
 extraction step only supplies facts; every threshold here is a plain
 if-statement, on purpose, so the decision is explainable and auditable.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from app.config import settings
 from app.models import ExtractedFields, Decision, RequestStatus, RequestRecord
@@ -48,7 +48,7 @@ def decide(
 
     # 2. Duplicate detection: same/similar vendor + similar amount within window
     duplicate_of = None
-    cutoff = datetime.utcnow() - timedelta(days=settings.DUPLICATE_WINDOW_DAYS)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.DUPLICATE_WINDOW_DAYS)
     for r in recent_requests:
         if r.incoming.received_at < cutoff:
             continue

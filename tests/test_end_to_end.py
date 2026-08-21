@@ -223,7 +223,7 @@ def test_risky_request_approved_in_notion_resumes(client):
     assert client.fake.runlog_for(rid) == ["Received", "Escalated"]
 
     client.fake.decisions[rid] = ("Approved", "Prof. R. Desai")
-    poll = client.post("/notion/check-approvals")
+    poll = client.post("/notion/check-approvals", headers=HDRS)
     assert rid in poll.json()["resumed"]
     assert poll.json()["failed"] == []
 
@@ -234,7 +234,7 @@ def test_risky_request_approved_in_notion_resumes(client):
     assert client.fake.runlog_for(rid) == ["Received", "Escalated", "Approved", "Action-Sent"]
 
     # A second poll does nothing: record has left Pending Approval.
-    poll2 = client.post("/notion/check-approvals").json()
+    poll2 = client.post("/notion/check-approvals", headers=HDRS).json()
     assert rid not in poll2["resumed"]
 
 
@@ -246,7 +246,7 @@ def test_risky_request_rejected_no_action(client):
     rid = body["request_id"]
 
     client.fake.decisions[rid] = ("Rejected", "Prof. R. Desai")
-    poll = client.post("/notion/check-approvals")
+    poll = client.post("/notion/check-approvals", headers=HDRS)
     assert rid in poll.json()["resumed"]
 
     record = store._MEM_STORE[rid]
@@ -289,6 +289,7 @@ def test_notion_create_failure_returns_502_and_preserves_record(client):
     client.fake.fail_creates = True
     resp = client.post("/webhook/request", json=_payload("k-nf", CLEAN_TEXT), headers=HDRS)
     assert resp.status_code == 502
+    assert "simulated create failure" not in resp.json()["detail"]
     assert client.fake.created == 0
 
     after_fail = client.post("/webhook/request", json=_payload("k-nf", CLEAN_TEXT), headers=HDRS)
