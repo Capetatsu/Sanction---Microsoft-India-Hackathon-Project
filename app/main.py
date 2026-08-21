@@ -17,6 +17,7 @@ redeploy/restart/spin-down.
 cannot run a reliable persistent in-process background loop.
 """
 import asyncio
+import hmac
 import os
 import uuid
 from datetime import datetime, timezone
@@ -58,7 +59,7 @@ def _check_webhook_auth(x_webhook_secret: str | None):
     if not settings.WEBHOOK_SECRET:
         # No secret configured — fail closed rather than silently open.
         raise HTTPException(500, "WEBHOOK_SECRET not configured on server")
-    if x_webhook_secret != settings.WEBHOOK_SECRET:
+    if not x_webhook_secret or not hmac.compare_digest(x_webhook_secret, settings.WEBHOOK_SECRET):
         raise HTTPException(401, "invalid or missing webhook secret")
 
 
