@@ -102,6 +102,12 @@ itself: status → Approved, PDF email sent, Run Log completes.
 6. Duplicate expense → escalated with `duplicate_of`, never auto-approved
 7. AI failure / Notion failure / email failure → honest Error row or honest
    fallback, never a silently claimed success
+8. Budget `Spent` auto-decrements after Auto-Approved and human-Approved;
+   NOT decremented on Rejected or Needs Clarification
+9. Double-poll of `/notion/check-approvals` → action fires exactly once
+   (atomic claim prevents duplicate PDF + email)
+10. Invalid/off-enum category from LLM → Needs Clarification with explicit
+    risk reason, never silently written to Notion's Category select
 
 ## Demo script
 

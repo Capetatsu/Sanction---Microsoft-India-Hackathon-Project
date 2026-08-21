@@ -73,9 +73,11 @@ class FakeNotion:
         self.pages = {}        # page_id -> {"request_id": str, "status": str}
         self.runlog = []       # list of (request_id, action, actor, detail)
         self.decisions = {}    # request_id -> (decision, decided_by)
-        self.budgets = {"Printing": (50000.0, 5000.0), "Decorations": (20000.0, 15000.0)}
+        self.budgets = {"Printing": (50000.0, 5000.0, "bp-printing"),
+                        "Decorations": (20000.0, 15000.0, "bp-deco")}
         self.created = 0
         self.fail_creates = False
+        self.fail_budget_increment = False
 
     async def create_request_page(self, record):
         if self.fail_creates:
@@ -96,7 +98,15 @@ class FakeNotion:
         self.runlog.append((request_id, action, actor, detail))
 
     async def get_budget(self, category):
-        return self.budgets.get(category, (0.0, 0.0))
+        return self.budgets.get(category, (0.0, 0.0, None))
+
+    async def increment_budget_spent(self, page_id, amount):
+        if self.fail_budget_increment:
+            raise notion_client.NotionAPIError("simulated budget update failure")
+        for cat, (cap, spent, pid) in self.budgets.items():
+            if pid == page_id:
+                self.budgets[cat] = (cap, spent + amount, pid)
+                return
 
     def runlog_for(self, request_id):
         return [a for (rid, a, _, _) in self.runlog if rid == request_id]
@@ -118,6 +128,7 @@ def client(monkeypatch):
     monkeypatch.setattr(notion_client, "get_request_decision", fake.get_request_decision)
     monkeypatch.setattr(notion_client, "append_run_log", fake.append_run_log)
     monkeypatch.setattr(notion_client, "get_budget", fake.get_budget)
+    monkeypatch.setattr(notion_client, "increment_budget_spent", fake.increment_budget_spent)
     monkeypatch.setattr(extraction, "extract", _extract_fields)
     monkeypatch.setattr(settings, "WEBHOOK_SECRET", "test-secret")
     monkeypatch.setattr(settings, "RESEND_API_KEY", "")
@@ -285,3 +296,119 @@ def test_malformed_payload_422(client):
 
 def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}
+
+
+# ===========================================================================
+# P2 REGRESSION TESTS
+# ===========================================================================
+
+# -- Budget Spent write-back ------------------------------------------------
+
+def test_budget_spent_increments_on_auto_approve(client):
+    """After auto-approval, the Budgets DB Spent should increase by the
+    request amount."""
+    cat = "Printing"
+    cap, spent_before, _ = client.fake.budgets[cat]
+    resp = client.post("/webhook/request", json=_payload("budget-auto", CLEAN_TEXT), headers=HDRS)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == RequestStatus.AUTO_APPROVED.value
+    _, spent_after, _ = client.fake.budgets[cat]
+    assert spent_after == spent_before + 2000.0
+
+
+def test_budget_spent_increments_on_human_approve(client):
+    """After human approval via check-approvals, Spent should increase."""
+    cat = "Printing"
+    cap, spent_before, _ = client.fake.budgets[cat]
+    resp = client.post("/webhook/request", json=_payload("budget-human", RISKY_TEXT), headers=HDRS)
+    rid = resp.json()["request_id"]
+    client.fake.decisions[rid] = ("Approved", "Prof. X")
+    client.post("/notion/check-approvals", headers=HDRS)
+    _, spent_after, _ = client.fake.budgets[cat]
+    assert spent_after == spent_before + 18000.0
+
+
+def test_budget_spent_NOT_incremented_on_reject(client):
+    """Rejected requests must not consume budget."""
+    cat = "Printing"
+    cap, spent_before, _ = client.fake.budgets[cat]
+    resp = client.post("/webhook/request", json=_payload("budget-rej", REJECT_TEXT), headers=HDRS)
+    rid = resp.json()["request_id"]
+    client.fake.decisions[rid] = ("Rejected", "Prof. X")
+    client.post("/notion/check-approvals", headers=HDRS)
+    _, spent_after, _ = client.fake.budgets[cat]
+    assert spent_after == spent_before  # unchanged
+
+
+def test_budget_spent_NOT_incremented_on_needs_clarification(client):
+    """Needs Clarification requests must not consume budget."""
+    cat = "Printing"
+    cap, spent_before, _ = client.fake.budgets[cat]
+    resp = client.post("/webhook/request", json=_payload("budget-gc", GARBAGE_TEXT), headers=HDRS)
+    assert resp.json()["status"] == RequestStatus.NEEDS_CLARIFICATION.value
+    _, spent_after, _ = client.fake.budgets[cat]
+    assert spent_after == spent_before  # unchanged
+
+
+def test_budget_increment_failure_logs_error(client, monkeypatch):
+    """If the budget PATCH fails, an Error row is logged but the approval
+    itself still succeeds."""
+    client.fake.fail_budget_increment = True
+    resp = client.post("/webhook/request", json=_payload("budget-fail", CLEAN_TEXT), headers=HDRS)
+    assert resp.status_code == 200
+    rid = resp.json()["request_id"]
+    log = client.fake.runlog_for(rid)
+    assert "Received" in log
+    assert "Auto-Approved" in log
+    assert "Action-Sent" in log
+    assert any("Budget Spent update failed" in detail
+               for (rid2, _a, _act, detail) in client.fake.runlog
+               if rid2 == rid)
+
+
+# -- Double-poll protection -------------------------------------------------
+
+def test_double_poll_only_fires_action_once(client):
+    """Two rapid polls for the same approved record must only trigger
+    _execute_action (PDF + email) once."""
+    resp = client.post("/webhook/request", json=_payload("dp1", RISKY_TEXT), headers=HDRS)
+    rid = resp.json()["request_id"]
+    client.fake.decisions[rid] = ("Approved", "Prof. Y")
+
+    # First poll — should resume and action
+    poll1 = client.post("/notion/check-approvals", headers=HDRS).json()
+    assert rid in poll1["resumed"]
+
+    # Second poll — record is no longer Pending, so nothing happens
+    poll2 = client.post("/notion/check-approvals", headers=HDRS).json()
+    assert rid not in poll2["resumed"]
+
+    # Action-Sent must appear exactly once
+    log = client.fake.runlog_for(rid)
+    assert log.count("Action-Sent") == 1
+
+
+# -- Invalid category --------------------------------------------------------
+
+def test_invalid_category_routes_to_clarification(client):
+    """An off-list category from the LLM must route to Needs Clarification."""
+    INVALID_TEXT = "Need Rs 5000 for dragon costumes from Fantasy Shop"
+    monkeypatch = pytest.MonkeyPatch()
+    from app import extraction as ext_mod
+
+    def _extract_with_bad_category(text):
+        return ExtractedFields(
+            vendor="Fantasy Shop", amount=5000.0, category="Dragon Costumes",
+            purpose="costumes", urgency="normal", missing_fields=[],
+            ai_summary="Rs 5000 for dragon costumes.")
+
+    monkeypatch.setattr(ext_mod, "extract", _extract_with_bad_category)
+    try:
+        resp = client.post("/webhook/request",
+                           json=_payload("bad-cat", INVALID_TEXT), headers=HDRS)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == RequestStatus.NEEDS_CLARIFICATION.value
+        assert any("not recognized" in r.lower() for r in body["risk_reasons"])
+    finally:
+        monkeypatch.undo()

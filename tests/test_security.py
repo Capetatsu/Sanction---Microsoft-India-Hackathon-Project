@@ -43,9 +43,10 @@ class FakeNotion:
         self.pages = {}
         self.runlog = []
         self.decisions = {}
-        self.budgets = {"Printing": (50000.0, 5000.0)}
+        self.budgets = {"Printing": (50000.0, 5000.0, "bp-printing")}
         self.created = 0
         self.fail_creates = False
+        self.fail_budget_increment = False
 
     async def create_request_page(self, record):
         if self.fail_creates:
@@ -66,7 +67,15 @@ class FakeNotion:
         self.runlog.append((request_id, action, actor, detail))
 
     async def get_budget(self, category):
-        return self.budgets.get(category, (0.0, 0.0))
+        return self.budgets.get(category, (0.0, 0.0, None))
+
+    async def increment_budget_spent(self, page_id, amount):
+        if self.fail_budget_increment:
+            raise notion_client.NotionAPIError("simulated budget update failure")
+        for cat, (cap, spent, pid) in self.budgets.items():
+            if pid == page_id:
+                self.budgets[cat] = (cap, spent + amount, pid)
+                return
 
 @pytest.fixture
 def client(monkeypatch):
@@ -78,6 +87,7 @@ def client(monkeypatch):
     monkeypatch.setattr(notion_client, "get_request_decision", fake.get_request_decision)
     monkeypatch.setattr(notion_client, "append_run_log", fake.append_run_log)
     monkeypatch.setattr(notion_client, "get_budget", fake.get_budget)
+    monkeypatch.setattr(notion_client, "increment_budget_spent", fake.increment_budget_spent)
     monkeypatch.setattr(extraction, "extract", _extract_fields)
     monkeypatch.setattr(settings, "WEBHOOK_SECRET", "test-secret")
     monkeypatch.setattr(settings, "RESEND_API_KEY", "")
@@ -319,23 +329,24 @@ class TestExceptionLeakage:
 # 9. CATEGORY VALIDATION
 # ===========================================================================
 class TestCategoryValidation:
-    def test_invalid_category_with_zero_budget_escalates(self):
+    def test_invalid_category_routes_to_clarification(self):
         ext = ExtractedFields(vendor="X", amount=100, category="INVALIDCategory!!!",
                               purpose="p", urgency="normal", missing_fields=[])
         d = policy.decide(ext, 0, 0, [])
-        assert d.status == RequestStatus.PENDING_APPROVAL
+        assert d.status == RequestStatus.NEEDS_CLARIFICATION
+        assert "not recognized" in d.risk_reasons[0].lower()
 
-    def test_none_category_with_zero_budget_escalates(self):
+    def test_none_category_does_not_crash_policy(self):
         ext = ExtractedFields(vendor="X", amount=100, category=None,
-                              purpose="p", urgency="normal", missing_fields=[])
-        d = policy.decide(ext, 0, 0, [])
-        assert d.status == RequestStatus.PENDING_APPROVAL
-
-    def test_invalid_category_does_not_crash_policy(self):
-        ext = ExtractedFields(vendor="X", amount=100, category="INVALID!!!",
                               purpose="p", urgency="normal", missing_fields=[])
         d = policy.decide(ext, 50000, 49000, [])
         assert d.status in (RequestStatus.AUTO_APPROVED, RequestStatus.PENDING_APPROVAL)
+
+    def test_valid_category_passes_through(self):
+        ext = ExtractedFields(vendor="X", amount=100, category="Printing",
+                              purpose="p", urgency="normal", missing_fields=[])
+        d = policy.decide(ext, 50000, 0, [])
+        assert d.status == RequestStatus.AUTO_APPROVED
 
 # ===========================================================================
 # 10. STORE RESILIENCE

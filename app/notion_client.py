@@ -136,16 +136,32 @@ async def append_run_log(request_id: str, action: str, actor: str, detail: str =
     await _post("/pages", payload)
 
 
-async def get_budget(category: str) -> tuple[float, float]:
-    """Returns (cap, spent) for a category by querying the Budgets DB.
-    Returns (0.0, 0.0) when the category truly has no budget row.
-    On API failure, raises NotionAPIError so the caller can handle it."""
+async def get_budget(category: str) -> tuple[float, float, str | None]:
+    """Returns (cap, spent, budget_page_id) for a category by querying the
+    Budgets DB.  Returns (0.0, 0.0, None) when the category truly has no
+    budget row.  On API failure, raises NotionAPIError so the caller can
+    handle it."""
     payload = {"filter": {"property": "Category", "select": {"equals": category}}}
     data = await _request("POST", f"/databases/{settings.NOTION_BUDGETS_DB_ID}/query", payload, retries=1)
     results = data.get("results", [])
     if not results:
-        return (0.0, 0.0)
-    props = results[0]["properties"]
+        return (0.0, 0.0, None)
+    page = results[0]
+    props = page["properties"]
     cap = props.get("Cap", {}).get("number") or 0.0
     spent = props.get("Spent", {}).get("number") or 0.0
-    return (cap, spent)
+    return (cap, spent, page["id"])
+
+
+async def increment_budget_spent(page_id: str, amount: float):
+    """PATCH the Budgets DB row to add `amount` to the Spent property.
+    Called after a request reaches a terminal success state (Auto-Approved
+    or human-Approved).  If this PATCH fails the caller MUST log an honest
+    Error row — do not silently treat the approval as having consumed
+    budget when it didn't."""
+    # Read current Spent first so the increment is correct even under
+    # concurrent writes (best-effort; Notion is not a database).
+    data = await _get(f"/pages/{page_id}")
+    current_spent = data.get("properties", {}).get("Spent", {}).get("number") or 0.0
+    new_spent = current_spent + amount
+    await _patch(f"/pages/{page_id}", {"properties": {"Spent": {"number": new_spent}}})

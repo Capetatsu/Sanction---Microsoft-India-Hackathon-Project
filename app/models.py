@@ -13,6 +13,19 @@ class RequestStatus(str, Enum):
     REJECTED = "Rejected"
 
 
+# Must match the extraction prompt's category list exactly.  An off-list
+# value from the LLM is treated as NEEDS_CLARIFICATION, not silently coerced.
+VALID_CATEGORIES = (
+    "Decorations",
+    "Stationery",
+    "Food & Refreshments",
+    "Printing",
+    "Transport",
+    "Equipment Rental",
+    "Other",
+)
+
+
 class IncomingRequest(BaseModel):
     """Raw payload hitting the webhook — as messy as real life. Field caps
     (PART 13) stop oversized input from reaching the LLM or Notion writes."""
@@ -47,5 +60,6 @@ class RequestRecord(BaseModel):
     extracted: ExtractedFields
     decision: Decision
     notion_page_id: Optional[str] = None
+    budget_page_id: Optional[str] = None
     decided_by: Optional[str] = None
     decided_at: Optional[datetime] = None

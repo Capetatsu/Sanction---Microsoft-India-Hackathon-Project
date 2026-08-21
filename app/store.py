@@ -19,6 +19,7 @@ _pool: Optional[asyncpg.Pool] = None
 # Fallback only used when DATABASE_URL is unset (local/dev/test).
 _MEM_STORE: dict[str, RequestRecord] = {}
 _MEM_IDEMPOTENCY: dict[str, str] = {}
+_MEM_ACTION_CLAIMS: set[str] = set()  # tracks which records have had action taken
 
 
 async def init():
@@ -43,6 +44,14 @@ async def init():
             CREATE TABLE IF NOT EXISTS idempotency (
                 idempotency_key TEXT PRIMARY KEY,
                 request_id TEXT NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS action_claims (
+                request_id TEXT PRIMARY KEY,
+                claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """
         )
@@ -88,7 +97,9 @@ async def get_record(request_id: str) -> Optional[RequestRecord]:
 
 async def recent_records() -> list[RequestRecord]:
     if not _pool:
-        return list(_MEM_STORE.values())
+        records = list(_MEM_STORE.values())
+        records.sort(key=lambda r: r.incoming.received_at, reverse=True)
+        return records[:500]
     async with _pool.acquire() as conn:
         rows = await conn.fetch("SELECT data FROM requests ORDER BY received_at DESC LIMIT 500")
         out = []
@@ -129,3 +140,22 @@ async def mark_processed(idempotency_key: str, request_id: str):
             idempotency_key,
             request_id,
         )
+
+
+async def claim_action(request_id: str) -> bool:
+    """Atomically claim a record for action (PDF + email).  Returns True on
+    first claim, False if another concurrent poll already claimed it.
+    This prevents _execute_action from firing twice for the same approval
+    under overlapping /notion/check-approvals polls."""
+    if not _pool:
+        if request_id in _MEM_ACTION_CLAIMS:
+            return False
+        _MEM_ACTION_CLAIMS.add(request_id)
+        return True
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO action_claims (request_id) VALUES ($1) "
+            "ON CONFLICT DO NOTHING RETURNING request_id",
+            request_id,
+        )
+        return row is not None

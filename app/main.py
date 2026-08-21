@@ -83,10 +83,10 @@ async def receive_request(incoming: IncomingRequest, x_webhook_secret: str | Non
 
     extracted = await asyncio.to_thread(extraction.extract, incoming.raw_text)
 
-    budget_cap, budget_spent = (0.0, 0.0)
+    budget_cap, budget_spent, budget_page_id = (0.0, 0.0, None)
     if extracted.category:
         try:
-            budget_cap, budget_spent = await notion_client.get_budget(extracted.category)
+            budget_cap, budget_spent, budget_page_id = await notion_client.get_budget(extracted.category)
         except notion_client.NotionAPIError:
             pass
 
@@ -102,6 +102,7 @@ async def receive_request(incoming: IncomingRequest, x_webhook_secret: str | Non
         incoming=incoming,
         extracted=extracted,
         decision=decision,
+        budget_page_id=budget_page_id,
     )
 
     # Durable record goes in after the idempotency claim. A crash or Notion
@@ -124,7 +125,13 @@ async def receive_request(incoming: IncomingRequest, x_webhook_secret: str | Non
         record.decided_at = datetime.now(timezone.utc)
         await store.save_record(record)
         await runlog.log(request_id, "Auto-Approved", "system", "; ".join(decision.risk_reasons) or "Within policy.")
+        await store.claim_action(request_id)  # defense-in-depth: prevent double-action
         await _execute_action(record)
+        if record.budget_page_id:
+            try:
+                await notion_client.increment_budget_spent(record.budget_page_id, extracted.amount)
+            except notion_client.NotionAPIError as e:
+                await runlog.log(request_id, "Error", "system", f"Budget Spent update failed after auto-approval: {e}")
     elif decision.status == RequestStatus.PENDING_APPROVAL:
         await runlog.log(request_id, "Escalated", "system", "; ".join(decision.risk_reasons))
     elif decision.status == RequestStatus.NEEDS_CLARIFICATION:
@@ -155,6 +162,9 @@ async def check_approvals(x_webhook_secret: str | None = Header(default=None)):
 
         try:
             if decision_value == "Approved":
+                # Atomic claim: prevents double-action if two polls overlap.
+                if not await store.claim_action(record.request_id):
+                    continue  # another poll already claimed this record
                 record.decision.status = RequestStatus.APPROVED
                 record.decided_by = decided_by or "unknown approver"
                 record.decided_at = datetime.now(timezone.utc)
@@ -162,6 +172,11 @@ async def check_approvals(x_webhook_secret: str | None = Header(default=None)):
                 await store.save_record(record)
                 await runlog.log(record.request_id, "Approved", record.decided_by)
                 await _execute_action(record)
+                if record.budget_page_id:
+                    try:
+                        await notion_client.increment_budget_spent(record.budget_page_id, record.extracted.amount)
+                    except notion_client.NotionAPIError as e:
+                        await runlog.log(record.request_id, "Error", "system", f"Budget Spent update failed after approval: {e}")
                 resumed.append(record.request_id)
             elif decision_value == "Rejected":
                 record.decision.status = RequestStatus.REJECTED

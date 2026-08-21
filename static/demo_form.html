@@ -2,29 +2,145 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sanction — Submit an expense request</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 560px; margin: 40px auto; }
-    input, textarea, button { width: 100%; box-sizing: border-box; padding: 8px; margin: 6px 0; }
-    textarea { height: 90px; }
-    #result { white-space: pre-wrap; background: #f2f2f2; padding: 12px; margin-top: 16px; display: none; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.04);
+      padding: 40px 36px;
+      width: 100%;
+      max-width: 520px;
+    }
+
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #1a1a2e;
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      color: #6b7280;
+      font-size: 0.9rem;
+      margin-bottom: 28px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #374151;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+      margin-top: 16px;
+    }
+
+    label:first-of-type { margin-top: 0; }
+
+    input, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-family: inherit;
+      color: #1a1a2e;
+      background: #f9fafb;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+      background: #ffffff;
+    }
+
+    textarea { height: 96px; resize: vertical; }
+
+    button {
+      margin-top: 24px;
+      padding: 12px 20px;
+      background: #6366f1;
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      width: 100%;
+    }
+
+    button:hover { background: #4f46e5; }
+    button:active { background: #4338ca; }
+
+    #result {
+      white-space: pre-wrap;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 14px;
+      margin-top: 20px;
+      font-size: 0.85rem;
+      font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+      color: #374151;
+      display: none;
+      word-break: break-word;
+    }
+
+    .badge {
+      display: inline-block;
+      background: #eef2ff;
+      color: #6366f1;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      margin-left: 8px;
+      vertical-align: middle;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
   </style>
 </head>
 <body>
-  <h1>Sanction</h1>
-  <p>Club expense request — hits the live backend, no scripts.</p>
-  <form id="form">
-    <label>Your name</label>
-    <input id="name" required>
-    <label>Contact (email)</label>
-    <input id="contact" required>
-    <label>What do you need, in your own words</label>
-    <textarea id="text" required></textarea>
-    <button type="submit">Submit expense request</button>
-  </form>
-  <pre id="result"></pre>
+  <div class="card">
+    <h1>Sanction <span class="badge">demo</span></h1>
+    <p class="subtitle">Club expense request — hits the live backend, no scripts.</p>
+    <form id="form">
+      <label for="name">Your name</label>
+      <input id="name" placeholder="e.g. Aisha Mehta" required>
+      <label for="contact">Contact (email)</label>
+      <input id="contact" type="email" placeholder="e.g. aisha@campus.edu" required>
+      <label for="text">What do you need, in your own words</label>
+      <textarea id="text" placeholder="e.g. Need Rs 2000 for printing posters from Copy King for the fest" required></textarea>
+      <button type="submit">Submit expense request</button>
+    </form>
+    <pre id="result"></pre>
+  </div>
   <script>
-    const SECRET = "REPLACE_WITH_WEBHOOK_SECRET"; // demo-only: server holds the real check
+    // DEMO-ONLY placeholder.  The real secret lives server-side in .env
+    // (WEBHOOK_SECRET).  This value only needs to match the server's
+    // WEBHOOK_SECRET during a local demo — it is NOT a production secret
+    // and is safe to ship in client-side code for the demo form.
+    const SECRET = "REPLACE_WITH_WEBHOOK_SECRET";
     document.getElementById("form").onsubmit = async (e) => {
       e.preventDefault();
       const payload = {

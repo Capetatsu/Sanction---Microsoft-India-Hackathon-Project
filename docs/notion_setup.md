@@ -51,12 +51,15 @@ Backend writes every field except `Decision` (the one field a human edits).
 |----------|------|
 | Category | title (must match the Requests Category select names exactly) |
 | Cap      | Number |
-| Spent    | Number |
+| Spent    | Number (auto-updated by the backend after each approved request) |
 | Remaining | Formula = `Cap - prop("Spent")` |
 | Period   | Text |
 
 Seed one row per category you will demo (e.g. `Printing: Cap 50000, Spent 5000`,
-`Decorations: Cap 20000, Spent 15000`).
+`Decorations: Cap 20000, Spent 15000`).  The backend automatically increments
+`Spent` when a request reaches a terminal success state (Auto-Approved or
+human-Approved).  Rejected and Needs-Clarification requests do not consume
+budget.
 
 ### 4.3 Run Log — append-only audit trail
 

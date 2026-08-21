@@ -6,7 +6,7 @@ if-statement, on purpose, so the decision is explainable and auditable.
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from app.config import settings
-from app.models import ExtractedFields, Decision, RequestStatus, RequestRecord
+from app.models import ExtractedFields, Decision, RequestStatus, RequestRecord, VALID_CATEGORIES
 
 
 def _vendor_similarity(a: str, b: str) -> float:
@@ -34,6 +34,17 @@ def decide(
             risk_reasons=["Amount is zero or invalid."],
         )
 
+    # 1c. Category must be one of the allowed set.  An off-list value means
+    # the LLM hallucinated a category — route to clarification rather than
+    # writing garbage to Notion's Category select (which auto-creates options)
+    # and silently breaking budget lookups.
+    if extracted.category and extracted.category not in VALID_CATEGORIES:
+        return Decision(
+            status=RequestStatus.NEEDS_CLARIFICATION,
+            risk_reasons=[f"Category not recognized: '{extracted.category}'. "
+                          f"Valid categories: {', '.join(VALID_CATEGORIES)}"],
+        )
+
     # 1b. Hard sanity ceiling — guards against a prompt-injection/model error
     # producing a large-but-under-budget-threshold number that would
     # otherwise sail through Auto-Approved.
@@ -46,7 +57,14 @@ def decide(
             ],
         )
 
-    # 2. Duplicate detection: same/similar vendor + similar amount within window
+    # 2. Duplicate detection: same/similar vendor + similar amount within window.
+    # NOTE: this uses fuzzy string matching (SequenceMatcher), not semantic
+    # similarity.  Trivial paraphrasing (e.g. "Copy shop" vs "Copy King") will
+    # slip through — this is an intentional, understood trade-off: a strict
+    # exact-match would be too brittle for real messy input, while semantic
+    # similarity would require an extra LLM call per request.  The fuzzy
+    # approach catches the common case (same vendor, slightly different
+    # wording) without the cost/latency of an embedding model.
     duplicate_of = None
     cutoff = datetime.now(timezone.utc) - timedelta(days=settings.DUPLICATE_WINDOW_DAYS)
     for r in recent_requests:
